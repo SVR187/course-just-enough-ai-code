@@ -132,7 +132,10 @@ app.post('/generate_embeddings', async (c) => {
         console.log("Cloudflare Response:", responseText);  // Debugging
 
         if (!response.ok) {
-            return c.json({ error: "Cloudflare API error", details: responseText }, response.status);
+            return new Response(JSON.stringify({ error: "Cloudflare API error", details: responseText }), {
+                status: response.status,
+                headers: { "Content-Type": "application/json" }
+            });            
         }
 
         // Parse JSON only if response contains valid JSON
