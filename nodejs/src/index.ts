@@ -5,6 +5,10 @@ import pkg from 'pg'
 import * as fs from 'fs'
 import * as path from 'path'
 import { fileURLToPath } from 'url'
+import dotenv from 'dotenv'
+import fetch from 'node-fetch'
+
+dotenv.config()
 
 const { Pool } = pkg
 const __filename = fileURLToPath(import.meta.url)
@@ -20,6 +24,11 @@ const pool = new Pool({
     user: process.env.POSTGRES_USER,
     password: process.env.POSTGRES_PASSWORD,
 })
+
+// Cloudflare API Configuration
+const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID
+const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN
+const CLOUDFLARE_EMBEDDING_URL = `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/baai/bge-base-en-v1.5`
 
 // Function to run migrations
 async function runMigrations() {
@@ -91,10 +100,59 @@ app.get('/insert', async (c) => {
 console.log("Starting server...")
 
 // Generate embeddings API
-app.post('/generate_embeddings', (c) => {
-    return c.json({
-        message: "Generated embeddings for 5 documents"
-    })
+app.post('/generate_embeddings', async (c) => {
+    try {
+        let requestData;
+        
+        try {
+            requestData = await c.req.json();
+        } catch (error) {
+            console.warn("Request body is missing or invalid. Using default text.");
+            requestData = { text: ["Default text for embedding"] };
+        }
+
+        const { text } = requestData;
+
+        // Ensure text is always valid
+        if (!text || (Array.isArray(text) && text.length === 0)) {
+            return c.json({ error: "Text input is required." }, 400);
+        }
+
+        const response = await fetch(CLOUDFLARE_EMBEDDING_URL, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${CLOUDFLARE_API_TOKEN}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ text }),
+        });
+
+        // Debugging: Check if response is empty or not JSON
+        const responseText = await response.text();
+        console.log("Cloudflare Response:", responseText);  // Debugging
+
+        if (!response.ok) {
+            return c.json({ error: "Cloudflare API error", details: responseText }, response.status);
+        }
+
+        // Parse JSON only if response contains valid JSON
+        let result;
+        try {
+            result = JSON.parse(responseText);
+        } catch (jsonError) {
+            console.error("JSON Parsing Error:", jsonError);
+            return c.json({ error: "Invalid JSON response from Cloudflare", details: responseText }, 500);
+        }
+
+        return c.json({
+            message: `Generated embeddings for ${Array.isArray(text) ? text.length : 1} document(s)`,
+            embeddings: result.result,
+        });
+
+    } catch (error) {
+        console.error("Embedding generation error:", error);
+        return c.json({ error: "Failed to generate embeddings.", details: error.message }, 500);
+    }
 })
 
 // Initialize database and start server
